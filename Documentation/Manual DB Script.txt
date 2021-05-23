@@ -1,0 +1,11 @@
+CREATE DATABASE rating;
+USE rating;
+CREATE TABLE users (
+    userID int IDENTITY(1,1) PRIMARY KEY,
+    Name varchar(255) NOT NULL,
+	username varchar(50) NOT NULL UNIQUE,
+	psword varchar(255) NOT NULL,
+	user_role int NOT NULL,
+	works int NOT NULL DEFAULT 0
+);
+INSERT INTO users(Name, username, psword, user_role) VALUES('Admin User', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 0);

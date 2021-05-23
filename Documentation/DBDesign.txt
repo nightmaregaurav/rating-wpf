@@ -1,0 +1,128 @@
+Database:
+CREATE DATABASE rating;
+
+Tables:
+CREATE TABLE topics (
+	topicID int IDENTITY(1,1) PRIMARY KEY,
+	topic varchar(50) NOT NULL UNIQUE
+);
+CREATE TABLE users (
+    userID int IDENTITY(1,1) PRIMARY KEY,
+    Name varchar(255) NOT NULL,
+	username varchar(50) NOT NULL UNIQUE,
+	psword varchar(255) NOT NULL,
+	user_role int NOT NULL,
+	works int NOT NULL DEFAULT 0
+);
+CREATE TABLE reviewers_speciality (
+    userID int NOT NULL,
+	topicID int NOT NULL,
+	AVGrate int NOT NULL DEFAULT 0,
+	FOREIGN KEY (userID) REFERENCES users(userID) ON DELETE CASCADE,
+	FOREIGN KEY (topicID) REFERENCES topics(topicID) ON DELETE CASCADE
+);
+CREATE TABLE posts (
+	postID int IDENTITY(1,1) PRIMARY KEY,
+    userID int NOT NULL,
+	topicID int NOT NULL,
+    postedON datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    caption VARCHAR(MAX) NULL,
+    document_name VARCHAR(255) NOT NULL,
+    document VARBINARY(MAX) NOT NULL,
+    creditLimit int NOT NULL DEFAULT 0,
+	FOREIGN KEY (userID) REFERENCES users(userID) ON DELETE CASCADE,
+	FOREIGN KEY (topicID) REFERENCES topics(topicID) ON DELETE CASCADE
+);
+CREATE TABLE assignments_posts (
+	postID int NOT NULL,
+    userID int NOT NULL,
+	FOREIGN KEY (postID) REFERENCES posts(postID) ON DELETE CASCADE,
+	FOREIGN KEY (userID) REFERENCES users(userID)
+);
+CREATE TABLE reviews (
+	reviewID int IDENTITY(1,1) PRIMARY KEY,
+	postID int NOT NULL,
+    userID int NOT NULL,
+    postedON datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    content VARCHAR(MAX) NULL,
+    rate int NULL,
+	FOREIGN KEY (postID) REFERENCES posts(postID) ON DELETE CASCADE,
+	FOREIGN KEY (userID) REFERENCES users(userID)
+);
+
+Triggers:
+IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgUsersDelete]')) 
+EXEC dbo.sp_executesql @statement = N'
+CREATE TRIGGER trgUsersDelete
+ON users
+INSTEAD OF DELETE
+AS
+DECLARE @uid int
+SELECT @uid = d.userID FROM deleted d
+BEGIN
+	DELETE FROM assignments_posts WHERE userID=@uid;
+	DELETE FROM reviews WHERE userID=@uid;
+	DELETE FROM users WHERE userID=@uid;
+END'
+IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgReviewrs_SpecialInsertInstead]')) 
+EXEC dbo.sp_executesql @statement = N'
+CREATE TRIGGER trgReviewrs_SpecialInsertInstead
+ON reviewers_speciality
+INSTEAD OF INSERT
+AS
+DECLARE @uid int
+DECLARE @tid int
+SELECT @uid = i.userID, @tid = i.topicID FROM inserted i
+BEGIN
+IF (NOT EXISTS(SELECT r.userID FROM reviewers_speciality r WHERE r.userID=@uid AND r.topicID=@tid))
+	INSERT INTO reviewers_speciality(userID, topicID) VALUES(@uid,@tid);
+END'
+IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgReviewsInsertUpdate]')) 
+EXEC dbo.sp_executesql @statement = N'
+CREATE TRIGGER trgReviewsInsertUpdate
+ON reviews
+AFTER UPDATE, INSERT
+AS
+DECLARE @topicid int
+DECLARE @userid int
+DECLARE @avgrate int
+SELECT @topicid = topicID FROM posts,inserted i WHERE posts.postID=i.postID 
+SELECT @userid = userid from inserted i
+SELECT @avgrate = AVG(reviews.rate) FROM posts INNER JOIN reviews ON posts.postID = reviews.postID WHERE (reviews.userID = @userid) AND (posts.topicID = @topicid) 
+BEGIN
+	IF(@avgrate IS NOT NULL)
+    UPDATE reviewers_speciality set AVGrate=@avgrate WHERE (topicID=@topicid) AND (userID=@userid);
+END'
+IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgPostsInsert]')) 
+EXEC dbo.sp_executesql @statement = N' 
+CREATE TRIGGER trgPostsInsert 
+ON posts 
+AFTER INSERT 
+AS 
+BEGIN 
+	INSERT INTO assignments_posts(postID, userID) 
+	SELECT TOP <number> tbl1.postID, tbl1.userID 
+	FROM ( 
+	SELECT p.postID as postID, reviewers_speciality.userID as userID 
+	FROM reviewers_speciality 
+	INNER JOIN 
+	inserted p 
+	ON 
+	reviewers_speciality.AVGrate >= p.creditLimit AND reviewers_speciality.topicID = p.topicID 
+	WHERE 
+	reviewers_speciality.userID != p.userID) as tbl1 
+	INNER JOIN 
+	users 
+	ON 
+	tbl1.userID = users.userID 
+	ORDER BY users.works 
+END'
+IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgAssignments_postsInsert]')) 
+EXEC dbo.sp_executesql @statement = N' 
+CREATE TRIGGER trgAssignments_postsInsert 
+ON assignments_posts 
+AFTER INSERT 
+AS 
+BEGIN 
+	UPDATE users SET works=works+1 WHERE users.userID IN (SELECT userID FROM inserted)
+END'
